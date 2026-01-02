@@ -1,3 +1,4 @@
-pandas==2.2.2
-openpyxl==3.1.5
-streamlit==1.40.0
+streamlit
+pandas
+altair
+openpyxl
