@@ -192,6 +192,57 @@ def render_kpis(kpis: dict):
     c6.metric("🔁 Top Channel", kpis["top_channel"])
 
 
+# CATEGORIZATION FUNCTIONS
+
+def categorize_spending(description: str) -> str:
+    """
+    Categorize spending based on description patterns.
+    Returns a category label.
+    """
+    desc_lower = description.lower()
+    
+    # Define category patterns (order matters for priority)
+    patterns = {
+        "Airtime": ["airtime", "recharge", "top up", "topup", "mtn", "glo", "9mobile", "etisalat"],
+        "Transfers": ["transfer", "send", "pay", "debit", "withdrawal"],
+        "Bills & Utilities": ["utility", "electric", "power", "water", "internet", "subscription"],
+        "Betting": ["bet", "stake", "gaming", "nairabet", "bet9ja", "sportybet"],
+        "POS & Withdrawals": ["pos", "withdrawal", "atm", "cash"],
+        "Food & Dining": ["restaurant", "food", "pizza", "chicken", "fuel", "gas"],
+        "Shopping": ["shop", "store", "buy", "purchase", "mall"],
+        "Entertainment": ["cinema", "movie", "ticket", "concert", "show"],
+        "Education": ["school", "tuition", "course", "training", "lesson"],
+    }
+    
+    for category, keywords in patterns.items():
+        for keyword in keywords:
+            if keyword in desc_lower:
+                return category
+    
+    return "Other"
+
+def categorize_income(description: str) -> str:
+    """
+    Categorize income sources based on description patterns.
+    Returns a category label.
+    """
+    desc_lower = description.lower()
+    
+    patterns = {
+        "Salary": ["salary", "payment", "wage", "monthly"],
+        "Transfers": ["transfer", "send", "received", "from"],
+        "Refunds": ["refund", "reversal", "credit back", "adjustment"],
+        "Cashback": ["cashback", "reward", "bonus", "promo"],
+        "Interest": ["interest", "dividend", "earnings"],
+    }
+    
+    for category, keywords in patterns.items():
+        for keyword in keywords:
+            if keyword in desc_lower:
+                return category
+    
+    return "Other"
+
 # CHARTS & INSIGHTS
 
 def render_charts(df: pd.DataFrame):
@@ -202,11 +253,16 @@ def render_charts(df: pd.DataFrame):
     weekday_spend = df.groupby("Weekday")["debit"].sum().reindex(
         ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
     ).fillna(0.0)
-
-   
-
-    # Row 1: 2 charts (Altair with green palette)
-    col1, col2 = st.columns(2)
+    
+    # Categorize spending and income
+    df["spending_category"] = df[df["debit"] > 0]["description"].apply(categorize_spending)
+    df["income_category"] = df[df["credit"] > 0]["description"].apply(categorize_income)
+    
+    spending_by_category = df[df["debit"] > 0].groupby("spending_category")["debit"].sum().sort_values(ascending=False)
+    income_by_category = df[df["credit"] > 0].groupby("income_category")["credit"].sum().sort_values(ascending=False)
+    
+    # Row 1: Daily Spending Trend & Monthly Comparison
+    col1, col2 = st.columns([2, 1])
     with col1:
         st.markdown("<h3 style='text-align:center'>Daily Spending Trend</h3>", unsafe_allow_html=True)
         df_daily = daily_spend.reset_index(name='amount')
@@ -220,39 +276,50 @@ def render_charts(df: pd.DataFrame):
         df_monthly = monthly.reset_index().melt(id_vars=['Month'], value_vars=['debit', 'credit'], var_name='type', value_name='amount')
         chart_monthly = alt.Chart(df_monthly).mark_bar().encode(
             x=alt.X('Month:N', sort=None, title='Month'),
-            y=alt.Y('amount:Q', title='Amount'),
+            y=alt.Y('amount:Q', title='Amount', axis=None),
             color=alt.Color('type:N', scale=alt.Scale(domain=['debit', 'credit'], range=[GREEN, LIGHT_GREEN]), legend=alt.Legend(title='Type'))
         ).properties(width='container', height=250)
         st.altair_chart(chart_monthly, use_container_width=True)
 
-    # st.divider()
+    st.divider()
 
-    # Row 2: 3 charts
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        st.markdown("<h3 style='text-align:center'>Channel Usage</h3>", unsafe_allow_html=True)
-        df_channel = channel_spend.reset_index(name='amount')
-        chart_channel = alt.Chart(df_channel).mark_bar(color=GREEN).encode(
-            x=alt.X('channel:N', sort='-y', title='Channel'),
-            y=alt.Y('amount:Q', title='Total Spend')
-        ).properties(width='container', height=220)
-        st.altair_chart(chart_channel, use_container_width=True)
-    with col4:
+    # Row 2: Spending by Category, Spending by Weekday & Transaction Volume
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("<h3 style='text-align:center'>Spending by Category</h3>", unsafe_allow_html=True)
+        df_spending_cat = spending_by_category.reset_index(name='amount')
+        chart_spending_cat = alt.Chart(df_spending_cat).mark_arc(innerRadius=50).encode(
+            theta=alt.Theta('amount:Q'),
+            color=alt.Color('spending_category:N', scale=alt.Scale(scheme='greens')),
+            tooltip=['spending_category:N', alt.Tooltip('amount:Q', format=',.2f')]
+        ).properties(width=300, height=300)
+        st.altair_chart(chart_spending_cat, use_container_width=True)
+    with col2:
         st.markdown("<h3 style='text-align:center'>Spending by Weekday</h3>", unsafe_allow_html=True)
         df_weekday = weekday_spend.reset_index(name='amount').rename(columns={"Weekday": "weekday"})
-        chart_weekday = alt.Chart(df_weekday).mark_bar(color=GREEN).encode(
+        bars = alt.Chart(df_weekday).mark_bar(color=GREEN).encode(
             x=alt.X('weekday:N', sort=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'], title='Weekday'),
-            y=alt.Y('amount:Q', title='Total Spend')
-        ).properties(width='container', height=220)
+            y=alt.Y('amount:Q', axis=None)
+        )
+        text = bars.mark_text(align='center', baseline='bottom').encode(
+            y=alt.Y('amount:Q'),
+            text=alt.Text('amount:Q', format=',.0f')
+        )
+        chart_weekday = (bars + text).properties(width='container', height=250)
         st.altair_chart(chart_weekday, use_container_width=True)
-    with col5:
+    with col3:
         st.markdown("<h3 style='text-align:center'>Transaction Volume by Month</h3>", unsafe_allow_html=True)
         txn_volume = df.groupby("Month").size()
         df_txn = txn_volume.reset_index(name='count')
-        chart_txn = alt.Chart(df_txn).mark_bar(color=GREEN).encode(
+        bars_txn = alt.Chart(df_txn).mark_bar(color=GREEN).encode(
             x=alt.X('Month:N', sort=None, title='Month'),
-            y=alt.Y('count:Q', title='Transactions')
-        ).properties(width='container', height=220)
+            y=alt.Y('count:Q', axis=None)
+        )
+        text_txn = bars_txn.mark_text(align='center', baseline='bottom').encode(
+            y=alt.Y('count:Q'),
+            text=alt.Text('count:Q', format=',.0f')
+        )
+        chart_txn = (bars_txn + text_txn).properties(width='container', height=250)
         st.altair_chart(chart_txn, use_container_width=True)
 
     st.divider()
@@ -281,6 +348,9 @@ def render_charts(df: pd.DataFrame):
 
 def main():
 
+    col1, col2, col3 = st.columns([1, 0.2, 1])
+    with col2:
+        st.image("logo.png", use_container_width=True)
     st.markdown("<h1 style='text-align:center'>Opay Yearly Wrapped up</h1>", unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader("Upload your bank statement (Excel, .xlsx)", type=["xlsx"])
@@ -297,8 +367,8 @@ def main():
     df_raw, used_sheet = load_data(uploaded_file, sheet_choice=chosen_sheet)
 
     # show small preview to user and let them confirm the header detection
-    st.subheader(f"Preview (first 8 rows) — from sheet: {used_sheet}")
-    st.dataframe(df_raw.head(8))
+    st.markdown("<h3>Preview (first 8 rows) — from sheet: {}</h3>".format(used_sheet), unsafe_allow_html=True)
+    st.dataframe(df_raw.head(8), use_container_width=True)
 
     st.markdown("<h1 style='text-align:center'>📊 SPENDING OVERVIEW</h1>", unsafe_allow_html=True)
     st.write("")
